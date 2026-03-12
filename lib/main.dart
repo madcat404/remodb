@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/material.dart';
 
@@ -20,12 +19,12 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'RemoDB',
       theme: ThemeData(
-        primaryColor: const Color(0xFF34495E),
+        primaryColor: const Color(0xFF87588E),
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFFF5F5F5),
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF34495E)),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF87588E)),
         appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF34495E),
+          backgroundColor: Color(0xFF87588E),
           foregroundColor: Colors.white,
         ),
       ),
@@ -59,7 +58,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  // [핵심 수정됨] 로컬 저장소가 아닌 서버(db_load.php)에서 DB 목록을 가져옵니다.
+  // 서버(db_load.php)에서 DB 목록을 가져오는 함수
   Future<void> _loadConnections() async {
     final loadedData = await ApiService.loadConnectionsFromServer();
 
@@ -70,14 +69,24 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // 화면에 카드를 추가하는 함수 (서버 저장은 다이얼로그에서 이미 처리됨)
-  void _addConnection(ConnectionInfo info) {
-    setState(() {
-      _connections.add(info);
-    });
+  // [수정 기능 추가] 연결 정보를 수정하기 위해 다이얼로그를 띄우는 함수
+  Future<void> _editConnection(ConnectionInfo info) async {
+    // NewConnectionDialog를 띄울 때 현재의 info를 인자로 전달합니다.
+    final result = await showDialog<ConnectionInfo>(
+      context: context,
+      builder: (BuildContext context) {
+        return NewConnectionDialog(connectionInfo: info); // 인자 전달
+      },
+    );
+
+    // 수정 완료 후 반환값이 있다면(저장 성공 시) 목록을 새로고침합니다.
+    if (result != null) {
+      _loadConnections();
+      _showCustomSnackBar('연결 정보가 수정되었습니다.', isSuccess: true);
+    }
   }
 
-  // [핵심 수정됨] 서버(db_delete.php)에 삭제를 요청하고 성공하면 화면에서도 지웁니다.
+  // 서버(db_delete.php)에 삭제를 요청하고 성공하면 화면에서도 지웁니다.
   void _deleteConnection(ConnectionInfo info) async {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('삭제 중입니다...'), duration: Duration(seconds: 1)),
@@ -89,21 +98,25 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _connections.remove(info);
       });
-      // 혹시 돌고 있던 10분 타이머가 있다면 취소
       _connectionTimers[info]?.cancel();
       _connectionTimers.remove(info);
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('삭제 완료'), backgroundColor: Colors.green),
-      );
+      _showCustomSnackBar('삭제 완료', isSuccess: true);
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('서버 삭제 실패'), backgroundColor: Colors.red),
-      );
+      _showCustomSnackBar('서버 삭제 실패', isSuccess: false);
     }
   }
 
-  // 연결 상태를 변경하고, 10분 타이머를 관리하는 통합 함수
+  // 공통 알림 스낵바
+  void _showCustomSnackBar(String message, {required bool isSuccess}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isSuccess ? Colors.green : Colors.red,
+      ),
+    );
+  }
+
+  // 연결 상태 및 타이머 관리
   void _updateConnectionStatus(ConnectionInfo info, bool isConnected) {
     setState(() {
       info.isConnected = isConnected;
@@ -117,12 +130,7 @@ class _HomeScreenState extends State<HomeScreen> {
           setState(() {
             info.isConnected = false;
           });
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('${info.dbName} 데이터베이스 연결이 자동 해제되었습니다.'),
-              backgroundColor: Colors.orange,
-            ),
-          );
+          _showCustomSnackBar('${info.dbName} 연결이 자동 해제되었습니다.', isSuccess: false);
         }
       });
     }
@@ -145,13 +153,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (result['success'] == true) {
       _updateConnectionStatus(info, true);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('연결되었습니다.'), backgroundColor: Colors.green),
-      );
+      _showCustomSnackBar('연결되었습니다.', isSuccess: true);
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('연결 실패: ${result['message']}'), backgroundColor: Colors.red),
-      );
+      _showCustomSnackBar('연결 실패: ${result['message']}', isSuccess: false);
     }
   }
 
@@ -177,27 +181,13 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Stack(
-              alignment: Alignment.center,
-              children: [
-                Container(width: 220, height: 220, decoration: const BoxDecoration(color: Color(0xFF4FC3F7), shape: BoxShape.circle)),
-                Column(
-                  children: const [
-                    Icon(Icons.cloud, size: 80, color: Colors.white),
-                    SizedBox(height: 5),
-                    Icon(Icons.storage, size: 80, color: Color(0xFF424242)),
-                  ],
-                ),
-              ],
-            ),
-            const SizedBox(height: 40),
-            const Text('원격 DB 관리 시스템', style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Color(0xFF2C3E50))),
-            const SizedBox(height: 10),
-            const Text('데이터를 조회하려면 아래 버튼을 클릭하세요.', style: TextStyle(fontSize: 16, color: Colors.grey)),
+            const Icon(Icons.storage, size: 80, color: Colors.grey),
+            const SizedBox(height: 20),
+            const Text('등록된 연결이 없습니다.', style: TextStyle(fontSize: 18, color: Colors.grey)),
           ],
         ),
       )
-          : RefreshIndicator( // [추가됨] 화면을 아래로 당기면 서버에서 다시 로드하는 기능
+          : RefreshIndicator(
         onRefresh: _loadConnections,
         child: ListView.builder(
           padding: const EdgeInsets.all(10),
@@ -217,7 +207,7 @@ class _HomeScreenState extends State<HomeScreen> {
           );
 
           if (result != null) {
-            _addConnection(result);
+            _loadConnections(); // 새로 추가된 경우 목록 갱신
           }
         },
         backgroundColor: const Color(0xFF2980B9),
@@ -236,19 +226,13 @@ class _HomeScreenState extends State<HomeScreen> {
         borderRadius: BorderRadius.circular(8),
         onTap: () async {
           _updateConnectionStatus(info, true);
-
           await Navigator.push(
             context,
             MaterialPageRoute(
               builder: (context) => DatabaseDashboardScreen(connectionInfo: info),
             ),
           );
-
           setState(() {});
-
-          if (info.isConnected) {
-            _updateConnectionStatus(info, true);
-          }
         },
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 16.0),
@@ -256,12 +240,11 @@ class _HomeScreenState extends State<HomeScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                width: 100, height: 100,
-                decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), color: Colors.transparent),
+                width: 80, height: 80,
                 child: Image.asset(
                   _getVendorLogo(info.vendor),
                   fit: BoxFit.contain,
-                  errorBuilder: (context, error, stackTrace) => const Icon(Icons.storage, size: 50, color: Colors.grey),
+                  errorBuilder: (context, error, stackTrace) => const Icon(Icons.storage, size: 40),
                 ),
               ),
               const SizedBox(width: 16),
@@ -281,10 +264,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               PopupMenuButton<String>(
                 icon: const Icon(Icons.more_vert, color: Colors.grey),
-                padding: EdgeInsets.zero,
-                color: Colors.white,
-                elevation: 3,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 onSelected: (String value) {
                   switch (value) {
                     case 'connect':
@@ -294,8 +273,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       _updateConnectionStatus(info, false);
                       break;
                     case 'edit':
-                      break;
-                    case 'copy':
+                      _editConnection(info); // 수정 함수 연결
                       break;
                     case 'delete':
                       _deleteConnection(info);
@@ -304,13 +282,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 },
                 itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
                   if (!info.isConnected)
-                    const PopupMenuItem<String>(value: 'connect', child: Text('Connect', style: TextStyle(fontSize: 16))),
+                    const PopupMenuItem<String>(value: 'connect', child: Text('Connect')),
                   if (info.isConnected)
-                    const PopupMenuItem<String>(value: 'disconnect', child: Text('Disconnect', style: TextStyle(fontSize: 16))),
-
-                  const PopupMenuItem<String>(value: 'edit', child: Text('Edit', style: TextStyle(fontSize: 16))),
-                  const PopupMenuItem<String>(value: 'copy', child: Text('Copy', style: TextStyle(fontSize: 16))),
-                  const PopupMenuItem<String>(value: 'delete', child: Text('Delete', style: TextStyle(fontSize: 16))),
+                    const PopupMenuItem<String>(value: 'disconnect', child: Text('Disconnect')),
+                  const PopupMenuItem<String>(value: 'edit', child: Text('Edit')),
+                  const PopupMenuItem<String>(value: 'delete', child: Text('Delete')),
                 ],
               ),
             ],
@@ -323,39 +299,23 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _infoRow(IconData icon, String text) {
     return Row(
       children: [
-        Icon(icon, size: 18, color: Colors.grey[600]),
+        Icon(icon, size: 16, color: Colors.grey[600]),
         const SizedBox(width: 8),
-        Text(text, style: TextStyle(fontSize: 15, color: Colors.grey[700], fontWeight: FontWeight.w400)),
+        Text(text, style: const TextStyle(fontSize: 14)),
       ],
     );
   }
 
   Widget _statusRow(bool isConnected) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: isConnected ? Colors.green[50] : Colors.red[50],
-        border: Border.all(color: Colors.black12),
         borderRadius: BorderRadius.circular(4),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            isConnected ? Icons.link : Icons.link_off,
-            size: 16,
-            color: isConnected ? Colors.green[700] : Colors.redAccent,
-          ),
-          const SizedBox(width: 6),
-          Text(
-            isConnected ? 'Connected' : 'Disconnected',
-            style: TextStyle(
-              fontSize: 13,
-              color: isConnected ? Colors.green[700] : Colors.redAccent,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
+      child: Text(
+        isConnected ? 'Connected' : 'Disconnected',
+        style: TextStyle(fontSize: 12, color: isConnected ? Colors.green[700] : Colors.red[700]),
       ),
     );
   }

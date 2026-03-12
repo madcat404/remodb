@@ -16,12 +16,19 @@ class TableDataScreen extends StatefulWidget {
   final ConnectionInfo info;
   final String database;
   final String tableName;
+  final List<dynamic>? initialRows;
+  final List<String>? initialColumns;
+  // [추가] 외부에서 계산된 실행 시간을 받기 위한 변수
+  final String? executionTime;
 
   const TableDataScreen({
     super.key,
     required this.info,
     required this.database,
-    required this.tableName
+    required this.tableName,
+    this.initialRows,
+    this.initialColumns,
+    this.executionTime, // 파라미터 추가
   });
 
   @override
@@ -45,22 +52,48 @@ class _TableDataScreenState extends State<TableDataScreen> {
   @override
   void initState() {
     super.initState();
-    // [대괄호 제거] 기본 쿼리 설정
+
+    // 컨트롤러 먼저 초기화
     _queryController = TextEditingController(
-        text: "SELECT TOP 1000 * FROM ${widget.tableName}"
+        text: widget.info.port == 1433 || widget.info.port == "1433"
+            ? "SELECT TOP 1000 * FROM ${widget.tableName}"
+            : "SELECT * FROM ${widget.tableName} LIMIT 1000"
     );
     _filterController = TextEditingController();
-    _runQuery();
+
+    // [수정] 전달받은 데이터가 있는 경우 처리 로직 개선
+    if (widget.initialRows != null && widget.initialColumns != null) {
+      _columns = widget.initialColumns!;
+      _allRows = widget.initialRows!;
+      _filteredRows = _allRows;
+      _rowSource = _RowSource(_filteredRows, _columns);
+
+      // [수정] 대시보드에서 전달받은 실행 시간이 있으면 사용, 없으면 "0.00s"
+      _executionTime = widget.executionTime ?? "0.00s";
+    } else {
+      // 테이블 클릭으로 들어온 경우에만 자동으로 첫 쿼리 실행
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _runQuery();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _queryController.dispose();
+    _filterController.dispose();
+    super.dispose();
   }
 
   // 쿼리 템플릿 숏컷 기능
   void _setQueryTemplate(String type) {
     String query = "";
     final table = widget.tableName;
+    bool isMSSQL = widget.info.port == 1433 || widget.info.port == "1433";
 
     switch (type) {
       case 'SELECT':
-        query = "SELECT TOP 1000 * FROM $table";
+        query = isMSSQL ? "SELECT TOP 1000 * FROM $table" : "SELECT * FROM $table LIMIT 1000";
         break;
       case 'UPDATE':
         String col = _columns.isNotEmpty ? _columns[0] : "column1";
@@ -84,9 +117,10 @@ class _TableDataScreenState extends State<TableDataScreen> {
     });
   }
 
+  // [중요] 직접 쿼리를 실행할 때 소요 시간 계산 로직
   Future<void> _runQuery() async {
     setState(() => _isLoading = true);
-    final stopwatch = Stopwatch()..start();
+    final stopwatch = Stopwatch()..start(); // 시간 측정 시작
 
     final result = await ApiService.executeQuery(
         widget.info,
@@ -94,7 +128,7 @@ class _TableDataScreenState extends State<TableDataScreen> {
         _queryController.text
     );
 
-    stopwatch.stop();
+    stopwatch.stop(); // 시간 측정 중지
 
     if (result['success'] == true) {
       setState(() {
@@ -104,14 +138,16 @@ class _TableDataScreenState extends State<TableDataScreen> {
         _filterController.clear();
         _rowSource = _RowSource(_filteredRows, _columns);
 
-        // 실행 시간 초(s) 단위 계산
+        // [수정] 밀리초를 초 단위로 변환하여 저장
         double seconds = stopwatch.elapsedMilliseconds / 1000.0;
         _executionTime = "${seconds.toStringAsFixed(2)}s";
       });
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(result['message'] ?? "조회 실패"))
-      );
+      if(mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(result['message'] ?? "조회 실패"), backgroundColor: Colors.red)
+        );
+      }
     }
     setState(() => _isLoading = false);
   }
@@ -136,15 +172,15 @@ class _TableDataScreenState extends State<TableDataScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: const Color(0xFF34495E),
+        backgroundColor: const Color(0xFF87588E),
         foregroundColor: Colors.white,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(widget.tableName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Text(widget.tableName, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             Text(
               "${_filteredRows.length} rows ($_executionTime)",
-              style: const TextStyle(fontSize: 12, color: Colors.white70),
+              style: const TextStyle(fontSize: 11, color: Colors.white70),
             ),
           ],
         ),
@@ -171,7 +207,6 @@ class _TableDataScreenState extends State<TableDataScreen> {
       ),
       body: Column(
         children: [
-          // [2] 쿼리 에디터 영역 (템플릿 버튼 포함)
           AnimatedVisibility(
             visible: _isQueryVisible,
             child: Container(
@@ -194,13 +229,14 @@ class _TableDataScreenState extends State<TableDataScreen> {
                   const SizedBox(height: 8),
                   TextField(
                     controller: _queryController,
-                    maxLines: 5,
+                    maxLines: 4,
                     style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold, fontSize: 13, fontFamily: 'monospace'),
                     decoration: const InputDecoration(
                         filled: true,
                         fillColor: Colors.white,
                         border: OutlineInputBorder(),
-                        labelText: "SQL Editor"
+                        labelText: "SQL Editor",
+                        alignLabelWithHint: true
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -210,8 +246,8 @@ class _TableDataScreenState extends State<TableDataScreen> {
                       TextButton(onPressed: () => _queryController.clear(), child: const Text("CLEAR")),
                       const SizedBox(width: 8),
                       ElevatedButton(
-                          onPressed: _runQuery,
-                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF34495E), foregroundColor: Colors.white),
+                          onPressed: _isLoading ? null : _runQuery,
+                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF87588E), foregroundColor: Colors.white),
                           child: const Text("RUN QUERY")
                       ),
                     ],
@@ -221,7 +257,6 @@ class _TableDataScreenState extends State<TableDataScreen> {
             ),
           ),
 
-          // [3] 검색창 영역
           AnimatedVisibility(
             visible: _isSearchVisible,
             child: Container(
@@ -229,7 +264,6 @@ class _TableDataScreenState extends State<TableDataScreen> {
               color: Colors.blueGrey[50],
               child: TextField(
                 controller: _filterController,
-                autofocus: true,
                 onChanged: _filterData,
                 decoration: InputDecoration(
                   prefixIcon: const Icon(Icons.search),
@@ -252,7 +286,6 @@ class _TableDataScreenState extends State<TableDataScreen> {
 
           const Divider(height: 1),
 
-          // [4] 데이터 결과 테이블
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
@@ -262,11 +295,10 @@ class _TableDataScreenState extends State<TableDataScreen> {
               behavior: MyCustomScrollBehavior(),
               child: SingleChildScrollView(
                 child: PaginatedDataTable(
-                  header: null, // 테이블 타이틀 삭제하여 공간 확보
-                  rowsPerPage: 10,
+                  rowsPerPage: _filteredRows.length < 10 ? (_filteredRows.isEmpty ? 1 : _filteredRows.length) : 10,
                   availableRowsPerPage: const [10, 20, 50, 100],
                   columns: _columns
-                      .map((col) => DataColumn(label: Text(col, style: const TextStyle(fontWeight: FontWeight.bold))))
+                      .map((col) => DataColumn(label: Text(col, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12))))
                       .toList(),
                   source: _rowSource!,
                   columnSpacing: 20,
@@ -281,7 +313,6 @@ class _TableDataScreenState extends State<TableDataScreen> {
     );
   }
 
-  // 숏컷 버튼 위젯 빌더
   Widget _queryShortcutButton(String label, Color color) {
     return Padding(
       padding: const EdgeInsets.only(right: 6.0),
@@ -289,13 +320,11 @@ class _TableDataScreenState extends State<TableDataScreen> {
         label: Text(label, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
         backgroundColor: color.withOpacity(0.8),
         onPressed: () => _setQueryTemplate(label),
-        padding: const EdgeInsets.symmetric(horizontal: 4),
       ),
     );
   }
 }
 
-// 애니메이션 헬퍼 위젯
 class AnimatedVisibility extends StatelessWidget {
   final bool visible;
   final Widget child;
@@ -304,7 +333,7 @@ class AnimatedVisibility extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnimatedCrossFade(
-      firstChild: Container(),
+      firstChild: const SizedBox.shrink(),
       secondChild: child,
       crossFadeState: visible ? CrossFadeState.showSecond : CrossFadeState.showFirst,
       duration: const Duration(milliseconds: 250),
@@ -312,7 +341,6 @@ class AnimatedVisibility extends StatelessWidget {
   }
 }
 
-// 데이터 소스 클래스
 class _RowSource extends DataTableSource {
   final List<dynamic> rows;
   final List<String> columns;
